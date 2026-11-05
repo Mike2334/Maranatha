@@ -75,15 +75,49 @@
         </button>
       </nav>
 
-      <!-- Botón de estado Offline / Respaldo -->
+      <!-- Botón de estado Offline / Respaldo y Rol de Director -->
       <div class="flex items-center gap-2">
-        <button onclick="openBackupModal()" class="bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs px-3 py-2 rounded-xl border border-gray-800 flex items-center gap-1.5 transition-colors" title="Google Drive y Modo Offline">
+        <button id="role-badge-btn" onclick="openRoleModal()" class="bg-gray-900 hover:bg-gray-800 text-xs px-2.5 py-1.5 rounded-xl border border-gray-800 flex items-center gap-1.5 transition-all text-gray-300">
+          <span id="role-icon"><i class="fa-solid fa-guitar text-amber-400"></i></span>
+          <span id="role-text" class="hidden sm:inline font-semibold">Músico</span>
+        </button>
+
+        <button onclick="openBackupModal()" class="bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs px-2.5 py-1.5 rounded-xl border border-gray-800 flex items-center gap-1.5 transition-colors" title="Google Drive y Respaldo">
           <i class="fa-brands fa-google-drive text-emerald-400"></i>
-          <span class="hidden sm:inline">Drive & Offline</span>
+          <span class="hidden sm:inline">Drive</span>
         </button>
       </div>
     </div>
   </header>
+
+  <!-- BANNER: NOTA EN VIVO DEL DIRECTOR -->
+  <div id="live-director-note-banner" class="hidden bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 text-white px-4 py-2 shadow-2xl z-50">
+    <div class="max-w-6xl mx-auto flex items-center justify-between text-xs sm:text-sm font-bold">
+      <div class="flex items-center gap-2">
+        <i class="fa-solid fa-bullhorn animate-bounce"></i>
+        <span>NOTA DEL DIRECTOR:</span>
+        <span id="live-note-content" class="bg-black/40 px-2 py-0.5 rounded font-mono text-amber-200"></span>
+      </div>
+      <button onclick="document.getElementById('live-director-note-banner').classList.add('hidden')" class="text-white hover:text-black text-xs font-bold px-2 py-1">
+        ✕
+      </button>
+    </div>
+  </div>
+
+  <!-- BANNER: PRÓXIMA CANCIÓN EN FILA -->
+  <div id="live-next-song-banner" class="hidden bg-gradient-to-r from-blue-600 to-cyan-600 text-white px-4 py-2 shadow-xl z-40">
+    <div class="max-w-6xl mx-auto flex items-center justify-between text-xs sm:text-sm font-bold">
+      <div class="flex items-center gap-2">
+        <i class="fa-solid fa-bell text-yellow-300"></i>
+        <span>PREPARAR SIGUIENTE:</span>
+        <span id="live-next-title" class="underline underline-offset-2"></span>
+        <span id="live-next-key" class="bg-black/30 px-1.5 py-0.5 rounded font-mono text-[11px]"></span>
+      </div>
+      <button onclick="document.getElementById('live-next-song-banner').classList.add('hidden')" class="text-white text-xs px-2 py-1">
+        ✕
+      </button>
+    </div>
+  </div>
 
   <!-- BANNER FLOTANTE: CANCIÓN ENTRANTE EN VIVO (CUANDO EL DIRECTOR CAMBIA DE TEMA) -->
   <div id="live-incoming-banner" class="hidden bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 text-black px-4 py-2.5 shadow-2xl z-50 cursor-pointer" onclick="AppState.followDirector = true; onLiveSongReceived({ songId: AppState.liveCurrentSongId, slotLabel: AppState.liveCurrentSlotLabel, contextType: AppState.liveContextType }); this.classList.add('hidden');">
@@ -307,6 +341,60 @@
     </div>
   </div>
 
+  <!-- ======================================================== -->
+  <!-- MODAL: ROL DE USUARIO (DIRECTOR VS MÚSICO)               -->
+  <!-- ======================================================== -->
+  <div id="role-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-gray-800">
+        <h3 class="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+          <i class="fa-solid fa-user-shield text-amber-500"></i> Rol en este Dispositivo
+        </h3>
+        <button onclick="closeRoleModal()" class="text-gray-400 hover:text-white">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+
+      <div class="text-xs text-gray-300 space-y-3">
+        <p>Solo <b>un teléfono, iPad o laptop</b> debe tener el mando de Director para evitar confusiones en vivo. Los demás dispositivos funcionan como <b>Músico / Receptor</b>.</p>
+
+        <!-- Opción 1: Músico / Receptor -->
+        <div onclick="setAppRole('musico')" class="p-3.5 rounded-xl border border-gray-800 bg-gray-950 hover:bg-gray-800/80 cursor-pointer flex items-center justify-between transition-all">
+          <div class="flex items-center gap-3">
+            <span class="w-9 h-9 rounded-xl bg-gray-900 text-amber-400 flex items-center justify-center text-sm font-bold border border-gray-800">
+              <i class="fa-solid fa-guitar"></i>
+            </span>
+            <div>
+              <div class="font-bold text-white text-sm">Modo Músico / Atril</div>
+              <div class="text-[11px] text-gray-400">Recibe las canciones y notas del Director automáticamente</div>
+            </div>
+          </div>
+          <span id="role-check-musico" class="text-emerald-400 font-bold text-sm"><i class="fa-solid fa-check"></i></span>
+        </div>
+
+        <!-- Opción 2: Tomar el Mando de Director -->
+        <div class="p-3.5 rounded-xl border border-amber-500/40 bg-amber-950/20 space-y-2">
+          <div class="flex items-center gap-3">
+            <span class="w-9 h-9 rounded-xl bg-amber-600 text-white flex items-center justify-center text-sm font-bold shadow-md">
+              <i class="fa-solid fa-tower-broadcast"></i>
+            </span>
+            <div>
+              <div class="font-bold text-white text-sm">Tomar Mando como Director</div>
+              <div class="text-[11px] text-amber-200">Controla qué canción suena, envía notas en vivo y ve quién está conectado</div>
+            </div>
+          </div>
+
+          <div class="pt-2 border-t border-amber-600/30 flex gap-2">
+            <input type="password" id="director-pin-input" placeholder="PIN (por defecto: 1234)" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-white text-xs font-mono text-center tracking-widest focus:outline-none focus:border-amber-500">
+            <button onclick="unlockDirectorRole()" class="bg-amber-600 hover:bg-amber-500 text-white font-bold px-4 py-2 rounded-lg text-xs shrink-0 transition-all shadow-md">
+              Activar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- TOAST NOTIFICACIÓN FLOTANTE -->
   <div id="toast" class="hidden fixed bottom-16 sm:bottom-6 right-4 sm:right-6 z-50 bg-amber-500 text-black px-4 py-3 rounded-xl shadow-2xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all duration-300 transform translate-y-20 opacity-0">
     <i class="fa-solid fa-circle-check"></i>
@@ -314,6 +402,7 @@
   </div>
 
   <!-- SCRIPTS -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
   <script src="js/sample-songs.js"></script>
   <script src="js/app.js"></script>
 </body>

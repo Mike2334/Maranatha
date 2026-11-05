@@ -20,6 +20,30 @@ const LITURGICAL_PARTS = [
 ];
 
 // Estado global de la aplicación
+// ==========================================
+// CONFIGURACIÓN DE RED Y SINCRONIZACIÓN EN VIVO (MQTT WSS)
+// ==========================================
+const MQTT_CONFIG = {
+  host: 'broker.hivemq.com',
+  port: 8884,
+  path: '/mqtt',
+  topic: 'maranatha/live_mike2334',
+  clientId: 'maranatha_' + Math.random().toString(36).substring(2, 9)
+};
+
+// Dispositivo local para identificar en la lista de conectados
+function getDeviceName() {
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const platform = /iPhone|iPad/i.test(navigator.userAgent) ? 'iPhone/iPad' : (/Android/i.test(navigator.userAgent) ? 'Android' : 'PC/Laptop');
+  let savedName = localStorage.getItem('maranatha_device_name');
+  if (!savedName) {
+    savedName = `${platform} (${Math.floor(Math.random() * 900 + 100)})`;
+    localStorage.setItem('maranatha_device_name', savedName);
+  }
+  return savedName;
+}
+
+// Estado global de la aplicación
 const AppState = {
   activeTab: 'cancionero', // 'cancionero' | 'misas' | 'eventos' | 'director' | 'visor'
   cancioneroSection: 'misa', // 'misa' | 'evento' | 'todos'
@@ -30,7 +54,6 @@ const AppState = {
   activeEventSetlist: null,
   
   // Contexto de Navegación del Setlist activo
-  // Permite que al tocar una canción en el Setlist, el visor tenga botones Anterior / Siguiente
   currentSetlistContext: null, // { type: 'misa'|'evento', title: string, items: [...], currentIndex: number }
   
   // Visor actual
@@ -43,20 +66,28 @@ const AppState = {
   autoScrollSpeed: 2, // 1 to 5
   autoScrollTimer: null,
   
-  // Modo Director / En Vivo (Misa vs Evento divididos)
-  isDirectorMode: false,
+  // Control de Roles: Solo 1 dispositivo debe ser el Director
+  userRole: localStorage.getItem('maranatha_user_role') || 'musico', // 'musico' | 'director'
+  directorPin: localStorage.getItem('maranatha_director_pin') || '1234',
+  followDirector: localStorage.getItem('maranatha_follow_director') !== 'false', // Seguir automáticamente
+  
+  // Modo Director / En Vivo
   directorType: 'misa', // 'misa' | 'evento'
-  liveRoomId: 'maranatha-principal',
   liveCurrentSongId: null,
   liveCurrentSlotLabel: '',
   liveContextType: 'misa', // 'misa' | 'evento'
+  liveNextSong: null, // { songId, title, key, label }
+  liveActiveNote: '', // Nota o indicación activa del director
+  
+  // Clientes y Músicos conectados en tiempo real
+  connectedClients: {}, // { clientId: { name, role, lastSeen } }
+  mqttClient: null,
   liveChannel: null,
   
   // Audio
   audioPlayer: null,
   isPlayingAudio: false
 };
-
 // ==========================================
 // INICIALIZACIÓN Y PERSISTENCIA (LOCALSTORAGE)
 // ==========================================
@@ -137,50 +168,266 @@ function saveEventSetlists() {
 }
 
 // ==========================================
-// CANAL EN VIVO / MODO DIRECTOR
+// CANAL EN VIVO / MODO DIRECTOR (MQTT WSS & LOCAL)
 // ==========================================
 function setupLiveChannel() {
+  // 1. BroadcastChannel para sincronizar pestañas en el mismo equipo
   if ('BroadcastChannel' in window) {
-    AppState.liveChannel = new BroadcastChannel('maranatha_live_sync');
-    AppState.liveChannel.onmessage = (event) => {
-      const data = event.data;
-      if (data && data.type === 'CHANGE_SONG') {
-        onLiveSongReceived(data);
+    try {
+      AppState.liveChannel = new BroadcastChannel('maranatha_live_sync');
+      AppState.liveChannel.onmessage = (event) => {
+        handleIncomingMessage(event.data);
+      };
+    } catch (e) {}
+  }
+
+  // 2. Conectar a MQTT sobre WebSockets con HiveMQ para sincronizar teléfonos e iPads
+  connectMqtt();
+
+  // 3. Heartbeat cada 3.5 segundos para presencia en tiempo real
+  setInterval(sendHeartbeat, 3500);
+  setInterval(cleanOldClients, 4000);
+
+  updateRoleUI();
+}
+
+function connectMqtt() {
+  if (typeof Paho === 'undefined' || !Paho.MQTT) {
+    console.warn('Paho MQTT no está cargado todavía, esperando...');
+    setTimeout(connectMqtt, 1500);
+    return;
+  }
+
+  try {
+    const client = new Paho.MQTT.Client(MQTT_CONFIG.host, MQTT_CONFIG.port, MQTT_CONFIG.path, MQTT_CONFIG.clientId);
+
+    client.onConnectionLost = (responseObject) => {
+      console.log('Conexión MQTT perdida, reconectando...', responseObject.errorMessage);
+      setTimeout(connectMqtt, 3000);
+    };
+
+    client.onMessageArrived = (message) => {
+      try {
+        const payload = JSON.parse(message.payloadString);
+        handleIncomingMessage(payload);
+      } catch (err) {
+        console.error('Error procesando mensaje MQTT:', err);
       }
     };
+
+    client.connect({
+      useSSL: true,
+      timeout: 5,
+      keepAliveInterval: 30,
+      onSuccess: () => {
+        console.log('¡Conectado al broker MQTT de Maranatha!');
+        AppState.mqttClient = client;
+        client.subscribe(MQTT_CONFIG.topic);
+        sendHeartbeat();
+      },
+      onFailure: (err) => {
+        console.warn('Fallo de conexión MQTT, reintentando:', err);
+        setTimeout(connectMqtt, 5000);
+      }
+    });
+  } catch (e) {
+    console.warn('Error inicializando MQTT:', e);
   }
 }
 
+function sendLiveMessage(payload) {
+  if (AppState.liveChannel) {
+    try { AppState.liveChannel.postMessage(payload); } catch(e){}
+  }
+
+  if (AppState.mqttClient && AppState.mqttClient.isConnected()) {
+    try {
+      const msg = new Paho.MQTT.Message(JSON.stringify(payload));
+      msg.destinationName = MQTT_CONFIG.topic;
+      AppState.mqttClient.send(msg);
+    } catch(e) {
+      console.warn('Error enviando mensaje MQTT:', e);
+    }
+  }
+
+  if (payload.type === 'CHANGE_SONG') {
+    localStorage.setItem('maranatha_live_state', JSON.stringify(payload));
+  }
+}
+
+function sendHeartbeat() {
+  const payload = {
+    type: 'HEARTBEAT',
+    clientId: MQTT_CONFIG.clientId,
+    deviceName: getDeviceName(),
+    role: AppState.userRole,
+    timestamp: Date.now()
+  };
+  sendLiveMessage(payload);
+}
+
+function cleanOldClients() {
+  const now = Date.now();
+  let changed = false;
+  for (const cid in AppState.connectedClients) {
+    if (now - AppState.connectedClients[cid].lastSeen > 10000) {
+      delete AppState.connectedClients[cid];
+      changed = true;
+    }
+  }
+  if (changed && AppState.activeTab === 'director') {
+    updateConnectedCounterUI();
+  }
+}
+
+function handleIncomingMessage(data) {
+  if (!data || !data.type) return;
+
+  if (data.type === 'HEARTBEAT') {
+    AppState.connectedClients[data.clientId] = {
+      name: data.deviceName || 'Músico',
+      role: data.role || 'musico',
+      lastSeen: Date.now()
+    };
+    updateConnectedCounterUI();
+    return;
+  }
+
+  if (data.type === 'CHANGE_SONG') {
+    onLiveSongReceived(data);
+    return;
+  }
+
+  if (data.type === 'NEXT_SONG') {
+    onNextSongReceived(data);
+    return;
+  }
+
+  if (data.type === 'DIRECTOR_NOTE') {
+    onDirectorNoteReceived(data);
+    return;
+  }
+
+  if (data.type === 'CLEAR_NOTE') {
+    AppState.liveActiveNote = '';
+    const noteBanner = document.getElementById('live-director-note-banner');
+    if (noteBanner) noteBanner.classList.add('hidden');
+    return;
+  }
+}
+
+// ------------------------------------------
+// ACCIONES DEL DIRECTOR HACIA LOS MÚSICOS
+// ------------------------------------------
 function broadcastLiveSong(songId, slotLabel = '', contextType = 'misa') {
+  if (AppState.userRole !== 'director') {
+    showToast('Solo el Director puede transmitir canciones a los atriles', 'info');
+    openRoleModal();
+    return;
+  }
+
   AppState.liveCurrentSongId = songId;
   AppState.liveCurrentSlotLabel = slotLabel;
   AppState.liveContextType = contextType;
-  
+
   const payload = {
     type: 'CHANGE_SONG',
     songId: songId,
     slotLabel: slotLabel,
     contextType: contextType,
+    directorName: getDeviceName(),
     keyOffset: AppState.currentKeyOffset,
     timestamp: Date.now()
   };
 
-  if (AppState.liveChannel) {
-    AppState.liveChannel.postMessage(payload);
-  }
-  
-  localStorage.setItem('maranatha_live_state', JSON.stringify(payload));
+  sendLiveMessage(payload);
   const tag = contextType === 'misa' ? '⛪ Misa' : '🎸 Evento';
-  showToast(`🔴 En Vivo (${tag}): Alabanza enviada a todos`);
+  showToast(`🔴 En Vivo (${tag}): Alabanza enviada a todos los músicos`);
+  
+  if (AppState.activeTab === 'director') {
+    renderModoDirector(document.getElementById('main-content'));
+  }
 }
 
+function broadcastNextSong(songId, slotLabel = '') {
+  if (AppState.userRole !== 'director') {
+    openRoleModal();
+    return;
+  }
+
+  const song = AppState.songs.find(s => s.id === songId);
+  if (!song) return;
+
+  AppState.liveNextSong = {
+    songId: song.id,
+    title: song.title,
+    key: song.originalKey,
+    label: slotLabel
+  };
+
+  const payload = {
+    type: 'NEXT_SONG',
+    songId: song.id,
+    title: song.title,
+    key: song.originalKey,
+    label: slotLabel,
+    timestamp: Date.now()
+  };
+
+  sendLiveMessage(payload);
+  showToast(`🔔 Indicaste a todos la siguiente alabanza: ${song.title}`, 'info');
+  
+  if (AppState.activeTab === 'director') {
+    renderModoDirector(document.getElementById('main-content'));
+  }
+}
+
+function broadcastDirectorNote(text) {
+  if (AppState.userRole !== 'director') {
+    openRoleModal();
+    return;
+  }
+
+  if (!text || !text.trim()) return;
+  text = text.trim();
+  AppState.liveActiveNote = text;
+
+  const payload = {
+    type: 'DIRECTOR_NOTE',
+    text: text,
+    timestamp: Date.now()
+  };
+
+  sendLiveMessage(payload);
+  showToast('📣 Nota enviada a la pantalla de todos los músicos', 'success');
+
+  const customInput = document.getElementById('director-custom-note-input');
+  if (customInput) customInput.value = '';
+
+  if (AppState.activeTab === 'director') {
+    renderModoDirector(document.getElementById('main-content'));
+  }
+}
+
+function clearDirectorNote() {
+  AppState.liveActiveNote = '';
+  sendLiveMessage({ type: 'CLEAR_NOTE', timestamp: Date.now() });
+  showToast('Nota de director retirada de las pantallas');
+  if (AppState.activeTab === 'director') {
+    renderModoDirector(document.getElementById('main-content'));
+  }
+}
+
+// ------------------------------------------
+// RECEPCIÓN EN LOS TELÉFONOS DE LOS MÚSICOS
+// ------------------------------------------
 function onLiveSongReceived(data) {
   const song = AppState.songs.find(s => s.id === data.songId);
   if (song) {
     AppState.liveCurrentSongId = data.songId;
     AppState.liveCurrentSlotLabel = data.slotLabel || '';
     AppState.liveContextType = data.contextType || 'misa';
-    
+
     const liveBanner = document.getElementById('live-incoming-banner');
     if (liveBanner) {
       liveBanner.classList.remove('hidden');
@@ -191,12 +438,112 @@ function onLiveSongReceived(data) {
       document.getElementById('live-banner-slot').textContent = data.slotLabel ? `(${data.slotLabel})` : '';
     }
 
+    // Si el músico tiene activado "Seguir al Director" o ya está en el visor
     if (AppState.activeTab === 'visor' || AppState.followDirector) {
       openSongViewer(song.id, data.keyOffset || 0, data.slotLabel);
+    } else if (AppState.activeTab === 'director') {
+      renderModoDirector(document.getElementById('main-content'));
     }
   }
 }
 
+function onNextSongReceived(data) {
+  AppState.liveNextSong = data;
+  const nextBanner = document.getElementById('live-next-song-banner');
+  if (nextBanner) {
+    nextBanner.classList.remove('hidden');
+    document.getElementById('live-next-title').textContent = data.title;
+    document.getElementById('live-next-key').textContent = `Tono: ${data.key}`;
+  }
+  showToast(`🔔 Director indica preparar siguiente: ${data.title} (${data.key})`, 'info');
+  
+  if (AppState.activeTab === 'director') {
+    renderModoDirector(document.getElementById('main-content'));
+  }
+}
+
+function onDirectorNoteReceived(data) {
+  AppState.liveActiveNote = data.text;
+  const noteBanner = document.getElementById('live-director-note-banner');
+  if (noteBanner) {
+    noteBanner.classList.remove('hidden');
+    document.getElementById('live-note-content').textContent = data.text;
+  }
+  showToast(`📣 NOTA DEL DIRECTOR: ${data.text}`, 'warning');
+}
+
+// ------------------------------------------
+// GESTIÓN DE ROLES (DIRECTOR VS MÚSICO)
+// ------------------------------------------
+function updateRoleUI() {
+  const isDir = AppState.userRole === 'director';
+  const roleText = document.getElementById('role-text');
+  const roleIcon = document.getElementById('role-icon');
+  const roleBtn = document.getElementById('role-badge-btn');
+
+  if (roleText && roleIcon && roleBtn) {
+    if (isDir) {
+      roleText.textContent = 'Director';
+      roleIcon.innerHTML = '<i class="fa-solid fa-crown text-amber-400"></i>';
+      roleBtn.className = 'bg-amber-950/80 hover:bg-amber-900 border border-amber-600/60 text-xs px-2.5 py-1.5 rounded-xl flex items-center gap-1.5 text-amber-300 font-bold shadow-md';
+    } else {
+      roleText.textContent = 'Músico';
+      roleIcon.innerHTML = '<i class="fa-solid fa-guitar text-gray-400"></i>';
+      roleBtn.className = 'bg-gray-900 hover:bg-gray-800 border border-gray-800 text-xs px-2.5 py-1.5 rounded-xl flex items-center gap-1.5 text-gray-300';
+    }
+  }
+
+  const checkMusico = document.getElementById('role-check-musico');
+  if (checkMusico) {
+    checkMusico.style.display = isDir ? 'none' : 'block';
+  }
+}
+
+function openRoleModal() {
+  document.getElementById('role-modal')?.classList.remove('hidden');
+  updateRoleUI();
+}
+
+function closeRoleModal() {
+  document.getElementById('role-modal')?.classList.add('hidden');
+}
+
+function unlockDirectorRole() {
+  const pinInput = document.getElementById('director-pin-input');
+  const pin = (pinInput?.value || '').trim();
+
+  if (pin === AppState.directorPin || pin === '1234') {
+    AppState.userRole = 'director';
+    localStorage.setItem('maranatha_user_role', 'director');
+    updateRoleUI();
+    closeRoleModal();
+    showToast('👑 ¡Modo Director activado en este dispositivo!', 'success');
+    if (AppState.activeTab === 'director') {
+      renderModoDirector(document.getElementById('main-content'));
+    }
+  } else {
+    alert('PIN incorrecto. El PIN por defecto es 1234.');
+  }
+}
+
+function setAppRole(role) {
+  AppState.userRole = role;
+  localStorage.setItem('maranatha_user_role', role);
+  updateRoleUI();
+  closeRoleModal();
+  showToast(role === 'director' ? 'Rol cambiado a Director' : 'Rol cambiado a Músico / Receptor', 'info');
+  if (AppState.activeTab === 'director') {
+    renderModoDirector(document.getElementById('main-content'));
+  }
+}
+
+function updateConnectedCounterUI() {
+  const counterEl = document.getElementById('live-connected-counter');
+  if (counterEl) {
+    const count = Object.keys(AppState.connectedClients).length;
+    counterEl.textContent = `${count} ${count === 1 ? 'dispositivo conectado' : 'dispositivos conectados'}`;
+  }
+}
 // ==========================================
 // PARSER Y STREAMING DE GOOGLE DRIVE AUDIO
 // ==========================================
@@ -1135,34 +1482,230 @@ function setDirectorType(type) {
 }
 
 function renderModoDirector(container) {
+  const isDirector = AppState.userRole === 'director';
+
+  if (!isDirector) {
+    // VISTA PARA LOS MÚSICOS Y CANTANTES (ATRIL RECEPTOR)
+    renderMusicoAtrilView(container);
+    return;
+  }
+
+  // VISTA PARA EL DISPOSITIVO DIRECTOR (SOLO 1 TIENE EL MANDO)
+  renderDirectorControlRoom(container);
+}
+
+// ========================================================
+// VISTA: ATRIL DEL MÚSICO (MODO RECEPTOR)
+// ========================================================
+function renderMusicoAtrilView(container) {
+  const currentSong = AppState.songs.find(s => s.id === AppState.liveCurrentSongId);
+  const nextSong = AppState.liveNextSong;
+  const connectedCount = Object.keys(AppState.connectedClients).length;
+
+  container.innerHTML = `
+    <div class="space-y-6 max-w-3xl mx-auto">
+      
+      <!-- Estado de conexión con el Director -->
+      <div class="bg-gray-900 border border-gray-800 p-4 sm:p-5 rounded-2xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-emerald-950/80 border border-emerald-700/60 text-emerald-400 flex items-center justify-center text-lg shadow-md shrink-0">
+            <i class="fa-solid fa-satellite-dish live-indicator"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+              <h3 class="text-sm font-bold text-white">Atril Sincronizado en Vivo</h3>
+            </div>
+            <p class="text-xs text-gray-400 mt-0.5">Tu pantalla sigue las indicaciones del Director</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 self-start sm:self-center">
+          <label class="flex items-center gap-2 text-xs text-gray-300 bg-gray-950 px-3 py-1.5 rounded-xl border border-gray-800 cursor-pointer">
+            <input type="checkbox" ${AppState.followDirector ? 'checked' : ''} onchange="toggleFollowDirector(this.checked)" class="accent-amber-500 rounded">
+            <span>Seguir al Director automáticamente</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- NOTA EN VIVO DEL DIRECTOR (SI HAY ALGUNA ACTIVA) -->
+      ${AppState.liveActiveNote ? `
+        <div class="bg-gradient-to-r from-red-950/70 via-rose-950/60 to-gray-900 border-2 border-red-500/60 p-4 rounded-2xl shadow-xl animate-pulse">
+          <div class="flex items-start gap-3">
+            <i class="fa-solid fa-bullhorn text-red-400 text-lg mt-0.5"></i>
+            <div>
+              <span class="text-xs text-red-400 font-bold uppercase tracking-wider">Indicación del Director ahora:</span>
+              <p class="text-base sm:text-lg font-black text-white mt-1">${AppState.liveActiveNote}</p>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- CANCIÓN QUE ESTÁ SONANDO AHORA EN EL ALTAR / ESCENARIO -->
+      <div class="bg-gradient-to-br from-amber-950/40 via-gray-900 to-gray-950 border-2 border-amber-500/50 p-6 rounded-3xl shadow-2xl relative overflow-hidden">
+        <div class="flex items-center justify-between mb-4">
+          <span class="bg-amber-500/20 text-amber-300 text-xs px-3 py-1 rounded-full font-bold uppercase tracking-wider border border-amber-500/40 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-red-500 live-indicator"></span>
+            Tocando en este momento
+          </span>
+          <span class="text-xs font-semibold text-gray-400">${AppState.liveContextType === 'misa' ? '⛪ Misa' : '🎸 Evento'}</span>
+        </div>
+
+        ${currentSong ? `
+          <div class="space-y-2">
+            <div class="text-xs font-semibold text-amber-400">${AppState.liveCurrentSlotLabel || 'Canto Actual'}</div>
+            <h2 class="text-2xl sm:text-4xl font-black text-white tracking-tight">${currentSong.title}</h2>
+            <div class="flex flex-wrap items-center gap-3 pt-1">
+              <span class="text-xs text-gray-400">Tono actual: <b class="text-amber-400 font-mono text-base">${currentSong.originalKey}</b></span>
+              ${currentSong.artist ? `<span class="text-xs text-gray-400">• Autor: ${currentSong.artist}</span>` : ''}
+              ${currentSong.notes ? `<span class="text-xs text-amber-200/90 italic bg-amber-950/50 px-2 py-0.5 rounded border border-amber-600/30">"${currentSong.notes}"</span>` : ''}
+            </div>
+
+            <div class="pt-6 flex flex-col sm:flex-row gap-3">
+              <button onclick="openSongViewer('${currentSong.id}', 0, '${AppState.liveCurrentSlotLabel}')" class="flex-1 bg-amber-600 hover:bg-amber-500 text-white font-black py-3.5 px-6 rounded-2xl text-base shadow-lg shadow-amber-600/30 flex items-center justify-center gap-2 transition-all">
+                <i class="fa-solid fa-book-open"></i> Abrir Acordes en Pantalla Completa
+              </button>
+              ${currentSong.driveAudioUrl ? `
+                <button onclick="playSongAudio('${currentSong.driveAudioUrl}')" class="bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 font-bold py-3.5 px-5 rounded-2xl text-sm flex items-center justify-center gap-2 transition-all">
+                  <i class="fa-brands fa-google-drive"></i> Audio
+                </button>
+              ` : ''}
+            </div>
+          </div>
+        ` : `
+          <div class="text-center py-10 text-gray-400 space-y-2">
+            <i class="fa-solid fa-hourglass-start text-3xl text-amber-400/60 block mb-2"></i>
+            <h3 class="text-lg font-bold text-white">Esperando que el Director inicie el canto</h3>
+            <p class="text-xs text-gray-500">En cuanto el director seleccione la primera canción, se abrirá aquí automáticamente.</p>
+          </div>
+        `}
+      </div>
+
+      <!-- PRÓXIMA CANCIÓN ANUNCIADA -->
+      ${nextSong ? `
+        <div class="bg-gray-900 border border-blue-600/40 p-4 rounded-2xl shadow-xl flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <span class="w-9 h-9 rounded-xl bg-blue-950 text-blue-400 flex items-center justify-center text-sm font-bold border border-blue-800">
+              <i class="fa-solid fa-bell"></i>
+            </span>
+            <div>
+              <span class="text-[11px] text-blue-400 font-bold uppercase tracking-wider">El Director indicó preparar siguiente:</span>
+              <h4 class="text-base font-bold text-white">${nextSong.title} <span class="text-xs font-mono text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">${nextSong.key}</span></h4>
+            </div>
+          </div>
+          <button onclick="openSongViewer('${nextSong.songId}', 0, 'Siguiente en fila')" class="bg-gray-950 hover:bg-gray-800 text-blue-300 px-3 py-2 rounded-xl text-xs font-bold border border-gray-800">
+            Previsualizar
+          </button>
+        </div>
+      ` : ''}
+
+      <!-- Acceso a Director con PIN -->
+      <div class="p-4 bg-gray-950 rounded-2xl border border-gray-900 text-center text-xs text-gray-500 space-y-2">
+        <p>¿Eres el director de alabanza y quieres controlar la sesión desde este teléfono o iPad?</p>
+        <button onclick="openRoleModal()" class="text-amber-400 hover:text-amber-300 font-bold flex items-center justify-center gap-1.5 mx-auto">
+          <i class="fa-solid fa-key"></i> Ingresar PIN de Director para tomar el mando
+        </button>
+      </div>
+
+    </div>
+  `;
+}
+
+function toggleFollowDirector(checked) {
+  AppState.followDirector = checked;
+  localStorage.setItem('maranatha_follow_director', checked ? 'true' : 'false');
+  showToast(checked ? 'Seguimiento automático activado' : 'Seguimiento manual activado', 'info');
+}
+
+// ========================================================
+// VISTA: CENTRO DE CONTROL DEL DIRECTOR (1 SOLO TIENE EL MANDO)
+// ========================================================
+function renderDirectorControlRoom(container) {
   const isMisa = AppState.directorType === 'misa';
   const currentSong = AppState.songs.find(s => s.id === AppState.liveCurrentSongId);
+  const connectedCount = Object.keys(AppState.connectedClients).length;
 
   container.innerHTML = `
     <div class="space-y-6">
       
-      <!-- PESTAÑAS PRINCIPALES: SEPARACIÓN ESTRICTA MISA VS EVENTO -->
-      <div class="grid grid-cols-2 gap-2 p-1.5 bg-gray-900 border border-gray-800 rounded-2xl shadow-xl">
-        <button onclick="setDirectorType('misa')" class="py-3 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${isMisa ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30' : 'text-gray-400 hover:text-white hover:bg-gray-800'}">
-          <i class="fa-solid fa-church"></i>
-          <span>Director de Misa</span>
-        </button>
-        <button onclick="setDirectorType('evento')" class="py-3 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${!isMisa ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30' : 'text-gray-400 hover:text-white hover:bg-gray-800'}">
-          <i class="fa-solid fa-guitar"></i>
-          <span>Director de Eventos / Retiro</span>
-        </button>
+      <!-- BARRA DE CABECERA DEL DIRECTOR -->
+      <div class="bg-gray-900 border border-amber-600/40 p-4 sm:p-5 rounded-2xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-red-500 live-indicator"></span>
+            <span class="text-xs font-black text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+              <i class="fa-solid fa-crown"></i> Mando de Director Activo en este dispositivo
+            </span>
+          </div>
+          <h2 class="text-xl sm:text-2xl font-black text-white mt-1">Sala de Control de Alabanza</h2>
+          <p class="text-xs text-gray-400 mt-0.5">Todo lo que toques aquí se actualiza inmediatamente en las pantallas de los músicos.</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <!-- Contador en vivo de dispositivos conectados -->
+          <div onclick="showConnectedDevicesModal()" class="bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer hover:bg-emerald-900 transition-all shadow-md" title="Ver lista de músicos conectados">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 live-indicator"></span>
+            <span id="live-connected-counter">${connectedCount} ${connectedCount === 1 ? 'dispositivo conectado' : 'dispositivos conectados'}</span>
+          </div>
+
+          <button onclick="setAppRole('musico')" class="bg-gray-950 hover:bg-gray-800 text-gray-400 hover:text-white px-3 py-2 rounded-xl text-xs border border-gray-800" title="Ceder mando">
+            Ceder Mando
+          </button>
+        </div>
+      </div>
+
+      <!-- PANEL DE NOTAS E INDICACIONES RÁPIDAS EN VIVO -->
+      <div class="bg-gray-900/80 border border-gray-800 p-4 sm:p-5 rounded-2xl shadow-xl space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+            <i class="fa-solid fa-bullhorn"></i> Enviar Nota o Indicación en Vivo a los Músicos
+          </h3>
+          ${AppState.liveActiveNote ? `
+            <button onclick="clearDirectorNote()" class="text-red-400 hover:text-red-300 text-xs font-semibold flex items-center gap-1">
+              <i class="fa-solid fa-xmark"></i> Quitar Nota Activa
+            </button>
+          ` : ''}
+        </div>
+
+        <!-- Chips de 1 clic para indicaciones rápidas en vivo -->
+        <div class="flex flex-wrap gap-1.5 text-xs">
+          ${[
+            'Solo piano y voces',
+            'Repetir coro suave',
+            'Subir 1 tono al final',
+            'Final con batería',
+            'Bajar intensidad',
+            'Estrofa 2 todos al unísono'
+          ].map(chip => `
+            <button onclick="broadcastDirectorNote('${chip}')" class="px-2.5 py-1.5 rounded-lg bg-gray-950 hover:bg-amber-950 hover:border-amber-500/60 border border-gray-800 text-gray-300 hover:text-amber-200 transition-all font-medium">
+              + ${chip}
+            </button>
+          `).join('')}
+        </div>
+
+        <!-- Mensaje personalizado -->
+        <div class="flex gap-2 pt-1">
+          <input type="text" id="director-custom-note-input" placeholder="O escribe una nota en vivo (ej. Solo voces en el puente)..." class="flex-1 bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500">
+          <button onclick="broadcastDirectorNote(document.getElementById('director-custom-note-input').value)" class="bg-amber-600 hover:bg-amber-500 text-white font-bold px-4 py-2 rounded-xl text-xs shrink-0 shadow-md transition-all">
+            Enviar a Pantallas
+          </button>
+        </div>
+
+        ${AppState.liveActiveNote ? `
+          <div class="bg-red-950/40 border border-red-600/40 p-2.5 rounded-xl text-xs text-red-200 flex items-center justify-between">
+            <span><b>Mostrando en atriles ahora:</b> "${AppState.liveActiveNote}"</span>
+            <button onclick="clearDirectorNote()" class="text-red-400 font-bold ml-2">✕</button>
+          </div>
+        ` : ''}
       </div>
 
       <!-- ESTADO ACTUAL DEL ATRIL -->
       <div class="p-4 sm:p-5 rounded-2xl border shadow-xl ${isMisa ? 'bg-gradient-to-r from-amber-950/40 via-gray-900 to-gray-900 border-amber-600/40' : 'bg-gradient-to-r from-purple-950/40 via-gray-900 to-gray-900 border-purple-600/40'}">
         <div class="flex items-center justify-between pb-3 border-b border-gray-800/80 mb-3">
-          <div class="flex items-center gap-2">
-            <span class="w-3 h-3 rounded-full bg-red-500 live-indicator"></span>
-            <span class="text-xs font-bold uppercase tracking-wider ${isMisa ? 'text-amber-400' : 'text-purple-400'}">
-              ${isMisa ? 'Transmisión Litúrgica Activa' : 'Transmisión de Evento Activa'}
-            </span>
-          </div>
-          <span class="text-[11px] text-gray-400 font-mono">Modo En Vivo</span>
+          <span class="text-xs font-bold uppercase tracking-wider ${isMisa ? 'text-amber-400' : 'text-purple-400'}">
+            ${isMisa ? 'Transmitiendo Misa Litúrgica' : 'Transmitiendo Evento'}
+          </span>
+          ${AppState.liveNextSong ? `<span class="text-xs bg-blue-950 border border-blue-700/60 text-blue-300 px-2 py-0.5 rounded font-medium">Próxima indicada: ${AppState.liveNextSong.title} (${AppState.liveNextSong.key})</span>` : ''}
         </div>
 
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1185,6 +1728,18 @@ function renderModoDirector(container) {
             </div>
           ` : ''}
         </div>
+      </div>
+
+      <!-- PESTAÑAS: SEPARACIÓN ESTRICTA DIRECTOR MISA VS EVENTO -->
+      <div class="grid grid-cols-2 gap-2 p-1.5 bg-gray-900 border border-gray-800 rounded-2xl shadow-xl">
+        <button onclick="setDirectorType('misa')" class="py-3 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${isMisa ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30' : 'text-gray-400 hover:text-white hover:bg-gray-800'}">
+          <i class="fa-solid fa-church"></i>
+          <span>Director de Misa</span>
+        </button>
+        <button onclick="setDirectorType('evento')" class="py-3 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${!isMisa ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30' : 'text-gray-400 hover:text-white hover:bg-gray-800'}">
+          <i class="fa-solid fa-guitar"></i>
+          <span>Director de Eventos / Retiro</span>
+        </button>
       </div>
 
       <!-- CONTENIDO ESPECÍFICO SEGÚN EL MODO ELEGIDO -->
@@ -1244,7 +1799,10 @@ function renderDirectorMisaSubView() {
               <div class="flex items-center gap-2 self-end sm:self-center">
                 ${song ? `
                   <button onclick="broadcastLiveSong('${song.id}', '${part.label}', 'misa')" class="px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${isCurrentlyLive ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/30' : 'bg-gray-800 hover:bg-amber-600 text-gray-200 hover:text-white border border-gray-700'}">
-                    <i class="fa-solid fa-tower-broadcast"></i> ${isCurrentlyLive ? 'Transmitiendo Ahora' : 'Transmitir Este Canto'}
+                    <i class="fa-solid fa-tower-broadcast"></i> ${isCurrentlyLive ? 'Transmitiendo Ahora' : 'Transmitir Ahora'}
+                  </button>
+                  <button onclick="broadcastNextSong('${song.id}', '${part.label}')" class="px-2.5 py-2 rounded-xl text-xs bg-gray-950 hover:bg-blue-900/60 text-blue-400 border border-gray-800 flex items-center gap-1 transition-all" title="Anunciar a los músicos como siguiente en fila">
+                    <i class="fa-solid fa-bell"></i> Siguiente
                   </button>
                   <button onclick="openSongViewer('${song.id}', 0, '${part.label}')" class="p-2 rounded-xl text-gray-400 hover:text-white bg-gray-950 border border-gray-800 text-xs" title="Ver Acordes">
                     <i class="fa-solid fa-eye"></i>
@@ -1320,7 +1878,10 @@ function renderDirectorEventoSubView() {
 
               <div class="flex items-center gap-2 self-end sm:self-center">
                 <button onclick="broadcastLiveSong('${song.id}', 'Pista #${index + 1}', 'evento')" class="px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${isCurrentlyLive ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30' : 'bg-gray-800 hover:bg-purple-600 text-gray-200 hover:text-white border border-gray-700'}">
-                  <i class="fa-solid fa-tower-broadcast"></i> ${isCurrentlyLive ? 'Transmitiendo Ahora' : 'Transmitir Este Canto'}
+                  <i class="fa-solid fa-tower-broadcast"></i> ${isCurrentlyLive ? 'Transmitiendo Ahora' : 'Transmitir Ahora'}
+                </button>
+                <button onclick="broadcastNextSong('${song.id}', 'Pista #${index + 1}')" class="px-2.5 py-2 rounded-xl text-xs bg-gray-950 hover:bg-blue-900/60 text-blue-400 border border-gray-800 flex items-center gap-1 transition-all" title="Anunciar a los músicos como siguiente">
+                  <i class="fa-solid fa-bell"></i> Siguiente
                 </button>
                 <button onclick="openSongViewer('${song.id}', 0, 'Canción #${index + 1}')" class="p-2 rounded-xl text-gray-400 hover:text-white bg-gray-950 border border-gray-800 text-xs" title="Ver Acordes">
                   <i class="fa-solid fa-eye"></i>
@@ -1332,6 +1893,25 @@ function renderDirectorEventoSubView() {
       </div>
     </div>
   `;
+}
+
+function showConnectedDevicesModal() {
+  const clients = AppState.connectedClients;
+  const list = Object.values(clients);
+  
+  let msg = `Dispositivos conectados en tiempo real (${list.length}):
+
+`;
+  if (list.length === 0) {
+    msg += 'No hay otros dispositivos conectados en este momento.
+Pasa el enlace a los músicos para que se unan!';
+  } else {
+    list.forEach((c, idx) => {
+      msg += `${idx + 1}. ${c.name} (${c.role === 'director' ? '👑 Director' : '🎧 Músico'})
+`;
+    });
+  }
+  alert(msg);
 }
 
 function stepEventSong(delta) {
@@ -1348,7 +1928,6 @@ function stepEventSong(delta) {
   if (nextIndex >= 0 && nextIndex < currentEvent.songs.length) {
     const nextItem = currentEvent.songs[nextIndex];
     broadcastLiveSong(nextItem.songId, `Pista #${nextIndex + 1}`, 'evento');
-    renderModoDirector(document.getElementById('main-content'));
   }
 }
 
@@ -1366,7 +1945,6 @@ function launchMassLive() {
       break;
     }
   }
-  showToast('Iniciado Modo Director para Misa', 'success');
 }
 
 function launchEventLive() {
@@ -1381,9 +1959,7 @@ function launchEventLive() {
   
   const first = ev.songs[0];
   broadcastLiveSong(first.songId, 'Pista #1', 'evento');
-  showToast('Iniciado Modo Director para Evento', 'success');
 }
-
 // ------------------------------------------
 // COMPARTIR SETLIST POR ENLACE / WHATSAPP
 // ------------------------------------------
