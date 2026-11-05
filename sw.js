@@ -1,4 +1,4 @@
-const CACHE_NAME = 'maranatha-alabanza-v1';
+const CACHE_NAME = 'maranatha-alabanza-v2';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
