@@ -65,10 +65,10 @@
           <i class="fa-solid fa-book-open"></i> Cancionero
         </button>
         <button onclick="switchTab('misas')" data-tab="misas" class="nav-btn px-3 py-1.5 rounded-lg text-gray-400 hover:text-white transition-all flex items-center gap-1.5">
-          <i class="fa-solid fa-church"></i> Misas
+          <i class="fa-solid fa-church"></i> Setlist Misas
         </button>
         <button onclick="switchTab('eventos')" data-tab="eventos" class="nav-btn px-3 py-1.5 rounded-lg text-gray-400 hover:text-white transition-all flex items-center gap-1.5">
-          <i class="fa-solid fa-guitar"></i> Eventos
+          <i class="fa-solid fa-guitar"></i> Setlist Eventos
         </button>
         <button onclick="switchTab('director')" data-tab="director" class="nav-btn px-3 py-1.5 rounded-lg text-gray-400 hover:text-white transition-all flex items-center gap-1.5">
           <i class="fa-solid fa-tower-broadcast text-red-400"></i> En Vivo
@@ -113,11 +113,11 @@
     </button>
     <button onclick="switchTab('misas')" data-tab="misas" class="nav-btn flex flex-col items-center gap-1 py-1 px-3 text-gray-400 transition-colors">
       <i class="fa-solid fa-church text-base"></i>
-      <span>Misas</span>
+      <span>Setlist Misa</span>
     </button>
     <button onclick="switchTab('eventos')" data-tab="eventos" class="nav-btn flex flex-col items-center gap-1 py-1 px-3 text-gray-400 transition-colors">
       <i class="fa-solid fa-guitar text-base"></i>
-      <span>Eventos</span>
+      <span>Setlist Eventos</span>
     </button>
     <button onclick="switchTab('director')" data-tab="director" class="nav-btn flex flex-col items-center gap-1 py-1 px-3 text-gray-400 transition-colors">
       <i class="fa-solid fa-tower-broadcast text-base text-red-400"></i>
@@ -153,9 +153,18 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <label class="block text-gray-400 font-semibold mb-1">Momento Litúrgico / Categoría</label>
+            <label class="block text-gray-400 font-semibold mb-1">Sección de Cancionero</label>
+            <select id="song-usage" class="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500 font-bold">
+              <option value="misa">⛪ Solo Misa</option>
+              <option value="evento">🎸 Solo Evento</option>
+              <option value="ambos">✝ Ambos</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-gray-400 font-semibold mb-1">Categoría / Momento</label>
             <select id="song-category" class="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
               <option value="Entrada">Entrada</option>
               <option value="Piedad">Señor Ten Piedad</option>
@@ -168,7 +177,9 @@
               <option value="Comunión">Comunión</option>
               <option value="Meditación / Adoración">Meditación / Adoración</option>
               <option value="Salida">Salida</option>
-              <option value="Animación / Alabanza">Animación / Alabanza</option>
+              <option value="Adoración">Adoración (Eventos)</option>
+              <option value="Animación">Animación (Eventos)</option>
+              <option value="Alabanza Rápida">Alabanza Rápida</option>
             </select>
           </div>
 
