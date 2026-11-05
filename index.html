@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Maranatha - Ministerio de Alabanza</title>
+
+  <!-- PWA Meta Tags -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#d97706">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Maranatha">
+  <link rel="apple-touch-icon" href="assets/logo.png">
+  <link rel="icon" type="image/png" href="assets/logo.png">
+
+  <!-- Tailwind CSS & FontAwesome -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#fffbeb',
+              100: '#fef3c7',
+              500: '#f59e0b',
+              600: '#d97706',
+              700: '#b45309',
+              900: '#78350f',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+
+<body class="bg-gray-950 text-gray-100 min-h-screen flex flex-col selection:bg-amber-500 selection:text-black">
+
+  <!-- TOP APP BAR -->
+  <header class="sticky top-0 z-40 bg-gray-950/90 backdrop-blur border-b border-gray-800 px-4 py-3">
+    <div class="max-w-6xl mx-auto flex items-center justify-between">
+      
+      <!-- Logo y Nombre del Ministerio -->
+      <div class="flex items-center gap-3 cursor-pointer" onclick="switchTab('cancionero')">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 p-0.5 shadow-lg shadow-amber-500/20 flex items-center justify-center overflow-hidden">
+          <img src="assets/logo.png" alt="Maranatha Logo" class="w-full h-full object-contain" onerror="this.src=''; this.innerHTML='✝';">
+        </div>
+        <div>
+          <h1 class="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-1.5">
+            MARANATHA
+            <span class="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full font-bold border border-amber-500/30">ALABANZA</span>
+          </h1>
+          <p class="text-[11px] text-gray-400">Cancionero, Misas y Eventos</p>
+        </div>
+      </div>
+
+      <!-- Pestañas Desktop -->
+      <nav class="hidden md:flex items-center gap-1 bg-gray-900 border border-gray-800 p-1 rounded-xl text-xs font-semibold">
+        <button onclick="switchTab('cancionero')" data-tab="cancionero" class="nav-btn px-3 py-1.5 rounded-lg text-amber-400 font-bold transition-all flex items-center gap-1.5">
+          <i class="fa-solid fa-book-open"></i> Cancionero
+        </button>
+        <button onclick="switchTab('misas')" data-tab="misas" class="nav-btn px-3 py-1.5 rounded-lg text-gray-400 hover:text-white transition-all flex items-center gap-1.5">
+          <i class="fa-solid fa-church"></i> Misas
+        </button>
+        <button onclick="switchTab('eventos')" data-tab="eventos" class="nav-btn px-3 py-1.5 rounded-lg text-gray-400 hover:text-white transition-all flex items-center gap-1.5">
+          <i class="fa-solid fa-guitar"></i> Eventos
+        </button>
+        <button onclick="switchTab('director')" data-tab="director" class="nav-btn px-3 py-1.5 rounded-lg text-gray-400 hover:text-white transition-all flex items-center gap-1.5">
+          <i class="fa-solid fa-tower-broadcast text-red-400"></i> En Vivo
+        </button>
+      </nav>
+
+      <!-- Botón de estado Offline / Respaldo -->
+      <div class="flex items-center gap-2">
+        <button onclick="openBackupModal()" class="bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs px-3 py-2 rounded-xl border border-gray-800 flex items-center gap-1.5 transition-colors" title="Google Drive y Modo Offline">
+          <i class="fa-brands fa-google-drive text-emerald-400"></i>
+          <span class="hidden sm:inline">Drive & Offline</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- BANNER FLOTANTE: CANCIÓN ENTRANTE EN VIVO (CUANDO EL DIRECTOR CAMBIA DE TEMA) -->
+  <div id="live-incoming-banner" class="hidden bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 text-black px-4 py-2.5 shadow-2xl z-50 cursor-pointer" onclick="AppState.followDirector = true; onLiveSongReceived({ songId: AppState.liveCurrentSongId, slotLabel: AppState.liveCurrentSlotLabel }); this.classList.add('hidden');">
+    <div class="max-w-6xl mx-auto flex items-center justify-between text-xs sm:text-sm font-bold">
+      <div class="flex items-center gap-2">
+        <span class="w-2.5 h-2.5 rounded-full bg-red-600 live-indicator"></span>
+        <span>🔴 EL DIRECTOR INDICÓ:</span>
+        <span id="live-banner-song-title" class="underline decoration-black underline-offset-2">Título de la alabanza</span>
+        <span id="live-banner-slot" class="text-black/80 font-normal"></span>
+      </div>
+      <div class="bg-black text-amber-400 px-3 py-1 rounded-lg text-xs font-black shrink-0 hover:bg-gray-900 transition-colors">
+        Tocar para abrir
+      </div>
+    </div>
+  </div>
+
+  <!-- CONTENIDO DINÁMICO PRINCIPAL -->
+  <main id="main-content" class="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-6 pb-24 md:pb-12">
+    <!-- El contenido de Cancionero / Misas / Eventos / Visor se inyecta aquí -->
+  </main>
+
+  <!-- BARRA DE NAVEGACIÓN INFERIOR PARA MÓVILES (MOBILE BOTTOM BAR) -->
+  <nav class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-gray-950/95 backdrop-blur border-t border-gray-800 px-2 py-2 flex items-center justify-around text-[10px] font-semibold">
+    <button onclick="switchTab('cancionero')" data-tab="cancionero" class="nav-btn flex flex-col items-center gap-1 py-1 px-3 text-amber-400 font-bold transition-colors">
+      <i class="fa-solid fa-book-open text-base"></i>
+      <span>Canciones</span>
+    </button>
+    <button onclick="switchTab('misas')" data-tab="misas" class="nav-btn flex flex-col items-center gap-1 py-1 px-3 text-gray-400 transition-colors">
+      <i class="fa-solid fa-church text-base"></i>
+      <span>Misas</span>
+    </button>
+    <button onclick="switchTab('eventos')" data-tab="eventos" class="nav-btn flex flex-col items-center gap-1 py-1 px-3 text-gray-400 transition-colors">
+      <i class="fa-solid fa-guitar text-base"></i>
+      <span>Eventos</span>
+    </button>
+    <button onclick="switchTab('director')" data-tab="director" class="nav-btn flex flex-col items-center gap-1 py-1 px-3 text-gray-400 transition-colors">
+      <i class="fa-solid fa-tower-broadcast text-base text-red-400"></i>
+      <span>En Vivo</span>
+    </button>
+  </nav>
+
+  <!-- ======================================================== -->
+  <!-- MODAL: AGREGAR / EDITAR ALABANZA                         -->
+  <!-- ======================================================== -->
+  <div id="song-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl">
+      <div class="p-4 border-b border-gray-800 flex items-center justify-between">
+        <h3 id="modal-title-text" class="text-lg font-bold text-white flex items-center gap-2">
+          <i class="fa-solid fa-music text-amber-500"></i> Nueva Alabanza
+        </h3>
+        <button onclick="closeSongModal()" class="text-gray-400 hover:text-white p-1 text-lg">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <form id="song-form" onsubmit="handleSongFormSubmit(event)" class="p-4 sm:p-6 overflow-y-auto space-y-4 flex-1 text-xs sm:text-sm">
+        <input type="hidden" id="modal-song-id">
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-gray-400 font-semibold mb-1">Título de la Alabanza *</label>
+            <input type="text" id="song-title" required placeholder="Ej. Pescador de Hombres" class="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
+          </div>
+          <div>
+            <label class="block text-gray-400 font-semibold mb-1">Autor / Intérprete</label>
+            <input type="text" id="song-artist" placeholder="Ej. Cesáreo Gabaráin / Martín Valverde" class="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-gray-400 font-semibold mb-1">Momento Litúrgico / Categoría</label>
+            <select id="song-category" class="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
+              <option value="Entrada">Entrada</option>
+              <option value="Piedad">Señor Ten Piedad</option>
+              <option value="Gloria">Gloria</option>
+              <option value="Salmo">Salmo</option>
+              <option value="Aleluya / Aclamación">Aleluya / Aclamación</option>
+              <option value="Ofertorio">Ofertorio</option>
+              <option value="Santo">Santo</option>
+              <option value="Paz / Cordero">Paz / Cordero</option>
+              <option value="Comunión">Comunión</option>
+              <option value="Meditación / Adoración">Meditación / Adoración</option>
+              <option value="Salida">Salida</option>
+              <option value="Animación / Alabanza">Animación / Alabanza</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-gray-400 font-semibold mb-1">Tono Original</label>
+            <select id="song-key" class="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-amber-500">
+              <option value="C">C (Do Mayor)</option>
+              <option value="C#">C# / Db</option>
+              <option value="D">D (Re Mayor)</option>
+              <option value="Eb">Eb / D#</option>
+              <option value="E">E (Mi Mayor)</option>
+              <option value="F">F (Fa Mayor)</option>
+              <option value="F#">F# / Gb</option>
+              <option value="G">G (Sol Mayor)</option>
+              <option value="Ab">Ab / G#</option>
+              <option value="A">A (La Mayor)</option>
+              <option value="Bb">Bb / A#</option>
+              <option value="B">B (Si Mayor)</option>
+              <option value="Am">Am (La menor)</option>
+              <option value="Em">Em (Mi menor)</option>
+              <option value="Dm">Dm (Re menor)</option>
+              <option value="Bm">Bm (Si menor)</option>
+              <option value="F#m">F#m (Fa# menor)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Google Drive Audio Link -->
+        <div class="bg-gray-950 p-3.5 rounded-xl border border-emerald-900/60">
+          <label class="block text-emerald-400 font-bold mb-1 flex items-center gap-1.5">
+            <i class="fa-brands fa-google-drive"></i> Enlace de Audio en Google Drive
+          </label>
+          <input type="url" id="song-drive" placeholder="https://drive.google.com/file/d/1A2B3C.../view?usp=sharing" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-emerald-500">
+          <p class="text-[11px] text-gray-400 mt-1">
+            <i class="fa-solid fa-circle-info text-amber-400 mr-1"></i>
+            En Google Drive haz clic derecho al archivo de audio &gt; <b>Compartir</b> &gt; Cambia a <b>"Cualquier persona con el enlace"</b> y pega aquí el link.
+          </p>
+        </div>
+
+        <div>
+          <label class="block text-gray-400 font-semibold mb-1">Notas de Ensayo / Estructura</label>
+          <input type="text" id="song-notes" placeholder="Ej. Solo piano en la entrada, coro entra en estribillo..." class="w-full bg-gray-950 border border-gray-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500">
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label class="block text-gray-400 font-semibold">Letra con Acordes entre Corchetes [ ]</label>
+            <span class="text-[11px] text-amber-400 font-mono">Ejemplo: [D]Vienen con a[A]legría</span>
+          </div>
+          <textarea id="song-lyrics" rows="10" placeholder="Escribe la letra colocando los acordes entre corchetes justo antes de la sílaba donde cambian:
+
+[C]Tú has venido a la [G]orilla,
+[Am]no has buscado ni a [F]sabios ni a [G]ricos..." class="w-full bg-gray-950 border border-gray-700 rounded-xl p-3 text-white font-mono text-xs focus:outline-none focus:border-amber-500"></textarea>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-gray-800">
+          <button type="button" onclick="closeSongModal()" class="px-4 py-2 rounded-xl text-gray-400 hover:text-white bg-gray-800">
+            Cancelar
+          </button>
+          <button type="submit" class="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold shadow-lg shadow-amber-600/30">
+            Guardar Alabanza
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODAL: ASIGNAR CANCIÓN A MISA O EVENTO                  -->
+  <!-- ======================================================== -->
+  <div id="assign-slot-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-lg p-5 shadow-2xl">
+      <div class="flex items-center justify-between pb-3 border-b border-gray-800 mb-3">
+        <div>
+          <h3 id="slot-target-title" class="font-bold text-white text-base">Asignar Canción</h3>
+          <p class="text-xs text-gray-400">Elige qué alabanza tocar en este momento</p>
+        </div>
+        <button onclick="document.getElementById('assign-slot-modal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+
+      <div id="slot-song-options">
+        <!-- Generado dinámicamente -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODAL: GOOGLE DRIVE Y COPIAS DE SEGURIDAD (OFFLINE)      -->
+  <!-- ======================================================== -->
+  <div id="backup-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-gray-800">
+        <h3 class="text-lg font-bold text-white flex items-center gap-2">
+          <i class="fa-brands fa-google-drive text-emerald-400"></i> Google Drive & Respaldo
+        </h3>
+        <button onclick="closeBackupModal()" class="text-gray-400 hover:text-white">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+
+      <div class="text-xs text-gray-300 space-y-3 leading-relaxed">
+        <div class="bg-emerald-950/40 border border-emerald-700/40 p-3 rounded-xl text-emerald-200">
+          <p class="font-bold mb-1"><i class="fa-solid fa-cloud-arrow-up mr-1"></i> ¿Cómo usar tu espacio de Google Drive?</p>
+          <p>1. Crea una carpeta en tu Google Drive llamada <b>"Maranatha - Audios"</b>.</p>
+          <p>2. Sube ahí los audios de los ensayos o maquetas en formato MP3 o M4A.</p>
+          <p>3. En Google Drive, haz clic en <i>Compartir &gt; Cualquier persona con el enlace</i>.</p>
+          <p>4. Pega ese link al editar la alabanza en esta app y ¡listo! Todos podrán escucharla.</p>
+        </div>
+
+        <div class="bg-gray-950 p-3 rounded-xl border border-gray-800 space-y-2">
+          <p class="font-bold text-amber-400"><i class="fa-solid fa-file-export mr-1"></i> Compartir repertorio completo:</p>
+          <p>Puedes descargar un archivo con todas las canciones, acordes y misas para pasarlo por WhatsApp o guardarlo en tu Google Drive.</p>
+          <button onclick="downloadBackupJSON()" class="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-2">
+            <i class="fa-solid fa-download"></i> Descargar Copia de Seguridad (.json)
+          </button>
+        </div>
+
+        <div class="bg-gray-950 p-3 rounded-xl border border-gray-800 space-y-2">
+          <p class="font-bold text-gray-300"><i class="fa-solid fa-file-import mr-1"></i> Restaurar / Cargar canciones de otro miembro:</p>
+          <input type="file" id="backup-file-input" accept=".json" onchange="importBackupJSON(this)" class="block w-full text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-gray-800 file:text-amber-400 file:font-semibold hover:file:bg-gray-700">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICACIÓN FLOTANTE -->
+  <div id="toast" class="hidden fixed bottom-16 sm:bottom-6 right-4 sm:right-6 z-50 bg-amber-500 text-black px-4 py-3 rounded-xl shadow-2xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all duration-300 transform translate-y-20 opacity-0">
+    <i class="fa-solid fa-circle-check"></i>
+    <span id="toast-text">Notificación</span>
+  </div>
+
+  <!-- SCRIPTS -->
+  <script src="js/sample-songs.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

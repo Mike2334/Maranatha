@@ -1,0 +1,70 @@
+/* Estilos personalizados para Ministerio Maranatha */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
+
+:root {
+  --font-main: 'Outfit', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  font-family: var(--font-main);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Letras y acordes */
+.chord-sheet {
+  font-family: var(--font-mono);
+  line-height: 2.1;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.chord-badge {
+  font-weight: 700;
+  color: #fbbf24; /* Amber 400 */
+  background: rgba(245, 158, 11, 0.15);
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.35rem;
+  display: inline-block;
+  margin: 0 0.1rem;
+  vertical-align: baseline;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+
+/* Modo atril / escenario oscuro de alto contraste */
+.stage-mode {
+  background-color: #030712 !important;
+  color: #f3f4f6 !important;
+}
+
+.stage-mode .chord-badge {
+  color: #fde047;
+  background: rgba(234, 179, 8, 0.25);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+/* Ocultar barra de desplazamiento sin perder funcionalidad */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Animación de pulso para el Modo En Vivo */
+@keyframes live-pulse {
+  0% { transform: scale(0.95); opacity: 0.7; }
+  50% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.7; }
+}
+
+.live-indicator {
+  animation: live-pulse 2s infinite ease-in-out;
+}
+
+/* Auto-scroll indicador flotante */
+.autoscroll-bar {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}

@@ -1,0 +1,22 @@
+{
+  "name": "Maranatha - Ministerio de Alabanza",
+  "short_name": "Maranatha",
+  "description": "Cancionero, acordes, audios de Google Drive y setlists para Misas y Eventos",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#d97706",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "./assets/logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "./assets/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
