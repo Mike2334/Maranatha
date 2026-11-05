@@ -40,9 +40,11 @@ const AppState = {
   
   // Modo Director / En Vivo
   isDirectorMode: false,
+  directorType: 'misa', // 'misa' | 'evento'
   liveRoomId: 'maranatha-principal',
   liveCurrentSongId: null,
   liveCurrentSlotLabel: '',
+  liveContextType: 'misa', // 'misa' | 'evento'
   liveChannel: null,
   
   // Audio
@@ -131,14 +133,16 @@ function setupLiveChannel() {
   }
 }
 
-function broadcastLiveSong(songId, slotLabel = '') {
+function broadcastLiveSong(songId, slotLabel = '', contextType = 'misa') {
   AppState.liveCurrentSongId = songId;
   AppState.liveCurrentSlotLabel = slotLabel;
+  AppState.liveContextType = contextType;
   
   const payload = {
     type: 'CHANGE_SONG',
     songId: songId,
     slotLabel: slotLabel,
+    contextType: contextType,
     keyOffset: AppState.currentKeyOffset,
     timestamp: Date.now()
   };
@@ -147,9 +151,9 @@ function broadcastLiveSong(songId, slotLabel = '') {
     AppState.liveChannel.postMessage(payload);
   }
   
-  // Guardamos en localStorage para pestañas/dispositivos que lean el último estado
   localStorage.setItem('maranatha_live_state', JSON.stringify(payload));
-  showToast(`🔴 En Vivo: Canción transmitida a todo el ministerio`);
+  const tag = contextType === 'misa' ? '⛪ Misa' : '🎸 Evento';
+  showToast(`🔴 En Vivo (${tag}): Alabanza enviada a todos`);
 }
 
 function onLiveSongReceived(data) {
@@ -157,16 +161,18 @@ function onLiveSongReceived(data) {
   if (song) {
     AppState.liveCurrentSongId = data.songId;
     AppState.liveCurrentSlotLabel = data.slotLabel || '';
+    AppState.liveContextType = data.contextType || 'misa';
     
-    // Si el usuario no es el director y tiene activada la sincronización en vivo
     const liveBanner = document.getElementById('live-incoming-banner');
     if (liveBanner) {
       liveBanner.classList.remove('hidden');
+      const prefix = data.contextType === 'misa' ? '⛪ EN MISA:' : '🎸 EN EVENTO:';
+      const typeBadge = document.getElementById('live-banner-type');
+      if (typeBadge) typeBadge.textContent = prefix;
       document.getElementById('live-banner-song-title').textContent = song.title;
       document.getElementById('live-banner-slot').textContent = data.slotLabel ? `(${data.slotLabel})` : '';
     }
 
-    // Si ya está en la vista del visor o modo seguimiento automático
     if (AppState.activeTab === 'visor' || AppState.followDirector) {
       openSongViewer(song.id, data.keyOffset || 0, data.slotLabel);
     }
@@ -942,92 +948,266 @@ function changeFontSize(delta) {
 }
 
 // ------------------------------------------
-// MODO DIRECTOR / PANTALLA EN VIVO
 // ------------------------------------------
+// MODO DIRECTOR / PANTALLA EN VIVO (DIVIDIDO: MISA vs EVENTO)
+// ------------------------------------------
+function setDirectorType(type) {
+  AppState.directorType = type;
+  renderModoDirector(document.getElementById('main-content'));
+}
+
 function renderModoDirector(container) {
-  const currentSong = AppState.songs.find(s => s.id === AppState.liveCurrentSongId) || AppState.songs[0];
+  const isMisa = AppState.directorType === 'misa';
+  const currentSong = AppState.songs.find(s => s.id === AppState.liveCurrentSongId);
 
   container.innerHTML = `
     <div class="space-y-6">
-      <div class="bg-gradient-to-r from-amber-950/60 to-gray-900 border border-amber-600/40 p-5 rounded-2xl shadow-xl">
-        <div class="flex items-center justify-between">
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="w-3 h-3 rounded-full bg-red-500 live-indicator"></span>
-              <span class="text-xs font-bold text-amber-400 uppercase tracking-wider">Centro de Control de Alabanza</span>
-            </div>
-            <h2 class="text-2xl font-bold text-white mt-1">Modo Director en Vivo</h2>
-            <p class="text-xs text-gray-300 mt-1">Cualquier alabanza que toques aquí se pondrá inmediatamente en la pantalla de todos los músicos y cantantes.</p>
-          </div>
-        </div>
+      
+      <!-- PESTAÑAS PRINCIPALES: SEPARACIÓN ESTRICTA MISA VS EVENTO -->
+      <div class="grid grid-cols-2 gap-2 p-1.5 bg-gray-900 border border-gray-800 rounded-2xl shadow-xl">
+        <button onclick="setDirectorType('misa')" class="py-3 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${isMisa ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30' : 'text-gray-400 hover:text-white hover:bg-gray-800'}">
+          <i class="fa-solid fa-church"></i>
+          <span>Director de Misa</span>
+        </button>
+        <button onclick="setDirectorType('evento')" class="py-3 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${!isMisa ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30' : 'text-gray-400 hover:text-white hover:bg-gray-800'}">
+          <i class="fa-solid fa-guitar"></i>
+          <span>Director de Eventos / Retiro</span>
+        </button>
       </div>
 
-      <!-- Canción que está sonando actualmente -->
-      <div class="bg-gray-900 p-5 rounded-2xl border border-gray-800">
-        <span class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Sonando ahora en el atril:</span>
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-2">
-          <div>
-            <h3 class="text-2xl font-black text-amber-400">${currentSong ? currentSong.title : 'Ninguna seleccionada'}</h3>
-            <p class="text-sm text-gray-400 mt-0.5">Tono: <span class="text-white font-mono font-bold">${currentSong ? currentSong.originalKey : '-'}</span> • Momento: <span class="text-amber-300">${AppState.liveCurrentSlotLabel || 'Libre'}</span></p>
+      <!-- ESTADO ACTUAL DEL ATRIL -->
+      <div class="p-4 sm:p-5 rounded-2xl border shadow-xl ${isMisa ? 'bg-gradient-to-r from-amber-950/40 via-gray-900 to-gray-900 border-amber-600/40' : 'bg-gradient-to-r from-purple-950/40 via-gray-900 to-gray-900 border-purple-600/40'}">
+        <div class="flex items-center justify-between pb-3 border-b border-gray-800/80 mb-3">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-red-500 live-indicator"></span>
+            <span class="text-xs font-bold uppercase tracking-wider ${isMisa ? 'text-amber-400' : 'text-purple-400'}">
+              ${isMisa ? 'Transmisión Litúrgica Activa' : 'Transmisión de Evento Activa'}
+            </span>
           </div>
+          <span class="text-[11px] text-gray-400 font-mono">Modo En Vivo</span>
+        </div>
+
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div class="text-xs text-gray-400">Sonando actualmente en atriles:</div>
+            <h3 class="text-xl sm:text-2xl font-black ${isMisa ? 'text-amber-400' : 'text-purple-300'} mt-0.5">
+              ${currentSong ? currentSong.title : 'Ninguna seleccionada todavía'}
+            </h3>
+            <p class="text-xs text-gray-400 mt-1">
+              ${currentSong ? `Tono: <span class="font-mono font-bold text-white">${currentSong.originalKey}</span>` : ''} 
+              ${AppState.liveCurrentSlotLabel ? `• <span class="font-semibold text-gray-300">${AppState.liveCurrentSlotLabel}</span>` : ''}
+            </p>
+          </div>
+
           ${currentSong ? `
-            <button onclick="openSongViewer('${currentSong.id}', 0, '${AppState.liveCurrentSlotLabel}')" class="bg-amber-600 hover:bg-amber-500 text-white font-bold px-4 py-2.5 rounded-xl text-sm flex items-center gap-2">
-              <i class="fa-solid fa-book-open"></i> Abrir Visor Completo
-            </button>
+            <div class="flex items-center gap-2">
+              <button onclick="openSongViewer('${currentSong.id}', 0, '${AppState.liveCurrentSlotLabel}')" class="px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all ${isMisa ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-purple-600 hover:bg-purple-500 text-white'}">
+                <i class="fa-solid fa-eye"></i> Ver Acordes
+              </button>
+            </div>
           ` : ''}
         </div>
       </div>
 
-      <!-- Selector Rápido para el Director -->
-      <div class="bg-gray-900/60 p-5 rounded-2xl border border-gray-800">
-        <h3 class="text-base font-bold text-white mb-3 flex items-center gap-2">
-          <i class="fa-solid fa-list-check text-amber-400"></i> Repertorio Rápido para Hoy
-        </h3>
-        
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          ${AppState.songs.map(song => `
-            <div onclick="broadcastLiveSong('${song.id}', 'Modo Director')" class="bg-gray-950 hover:bg-amber-950/40 border ${song.id === AppState.liveCurrentSongId ? 'border-amber-500 bg-amber-950/30' : 'border-gray-800 hover:border-amber-500/40'} p-3 rounded-xl cursor-pointer transition-all flex items-center justify-between">
-              <div>
-                <h4 class="text-sm font-bold text-white line-clamp-1">${song.title}</h4>
-                <span class="text-xs text-gray-400">${song.category || 'General'}</span>
+      <!-- CONTENIDO ESPECÍFICO SEGÚN EL MODO ELEGIDO -->
+      ${isMisa ? renderDirectorMisaSubView() : renderDirectorEventoSubView()}
+
+    </div>
+  `;
+}
+
+// SUBVISTA EXCLUSIVA: DIRECTOR DE MISA
+function renderDirectorMisaSubView() {
+  const currentMass = AppState.activeMassSetlist || AppState.massSetlists[0];
+
+  return `
+    <div class="space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gray-900/60 p-4 rounded-xl border border-gray-800">
+        <div>
+          <span class="text-xs text-amber-400 font-bold uppercase tracking-wider">Misa en curso:</span>
+          <h4 class="text-base font-bold text-white">${currentMass.title}</h4>
+        </div>
+        ${AppState.massSetlists.length > 1 ? `
+          <select onchange="selectMass(this.value); setDirectorType('misa');" class="bg-gray-950 border border-gray-700 text-gray-200 text-xs rounded-lg px-3 py-2">
+            ${AppState.massSetlists.map(m => `
+              <option value="${m.id}" ${m.id === currentMass.id ? 'selected' : ''}>${m.title}</option>
+            `).join('')}
+          </select>
+        ` : ''}
+      </div>
+
+      <!-- Lista estricta de las 11 partes litúrgicas -->
+      <div class="bg-gray-900/80 rounded-2xl border border-gray-800 overflow-hidden divide-y divide-gray-800/80">
+        ${LITURGICAL_PARTS.map((part) => {
+          const songId = currentMass.slots ? currentMass.slots[part.key] : null;
+          const song = songId ? AppState.songs.find(s => s.id === songId) : null;
+          const isCurrentlyLive = song && AppState.liveCurrentSongId === song.id;
+
+          return `
+            <div class="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${isCurrentlyLive ? 'bg-amber-500/15 border-l-4 border-amber-500' : 'hover:bg-gray-800/40'}">
+              <div class="flex items-center gap-3">
+                <span class="w-8 h-8 rounded-lg ${isCurrentlyLive ? 'bg-amber-500 text-black font-black' : 'bg-gray-950 text-amber-400 border border-gray-800'} flex items-center justify-center text-xs font-bold shrink-0">
+                  <i class="fa-solid fa-church"></i>
+                </span>
+                <div>
+                  <div class="text-xs text-gray-400 font-medium">${part.label}</div>
+                  ${song ? `
+                    <div class="flex items-center gap-2 mt-0.5">
+                      <span class="text-sm font-bold text-white">${song.title}</span>
+                      <span class="bg-amber-500/10 text-amber-400 text-[10px] font-mono px-1.5 py-0.2 rounded border border-amber-500/30">
+                        ${song.originalKey}
+                      </span>
+                    </div>
+                  ` : `
+                    <p class="text-xs text-gray-500 italic">Sin canto asignado para este momento</p>
+                  `}
+                </div>
               </div>
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-mono text-amber-400 font-bold">${song.originalKey}</span>
-                <i class="fa-solid fa-play text-gray-600 hover:text-amber-400 text-xs"></i>
+
+              <div class="flex items-center gap-2 self-end sm:self-center">
+                ${song ? `
+                  <button onclick="broadcastLiveSong('${song.id}', '${part.label}', 'misa')" class="px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${isCurrentlyLive ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/30' : 'bg-gray-800 hover:bg-amber-600 text-gray-200 hover:text-white border border-gray-700'}">
+                    <i class="fa-solid fa-tower-broadcast"></i> ${isCurrentlyLive ? 'Transmitiendo Ahora' : 'Transmitir Este Canto'}
+                  </button>
+                  <button onclick="openSongViewer('${song.id}', 0, '${part.label}')" class="p-2 rounded-xl text-gray-400 hover:text-white bg-gray-950 border border-gray-800 text-xs" title="Ver Acordes">
+                    <i class="fa-solid fa-eye"></i>
+                  </button>
+                ` : `
+                  <button onclick="openAssignSongModal('${part.key}', '${part.label}')" class="px-3 py-1.5 rounded-lg text-xs bg-gray-950 hover:bg-gray-800 text-amber-400 border border-gray-800 flex items-center gap-1">
+                    <i class="fa-solid fa-plus"></i> Asignar
+                  </button>
+                `}
               </div>
             </div>
-          `).join('')}
-        </div>
+          `;
+        }).join('')}
       </div>
     </div>
   `;
+}
+
+// SUBVISTA EXCLUSIVA: DIRECTOR DE EVENTO
+function renderDirectorEventoSubView() {
+  const currentEvent = AppState.activeEventSetlist || AppState.eventSetlists[0];
+  const songsList = currentEvent.songs || [];
+  const currentActiveIndex = songsList.findIndex(item => item.songId === AppState.liveCurrentSongId);
+
+  return `
+    <div class="space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gray-900/60 p-4 rounded-xl border border-gray-800">
+        <div>
+          <span class="text-xs text-purple-400 font-bold uppercase tracking-wider">Evento / Retiro en curso:</span>
+          <h4 class="text-base font-bold text-white">${currentEvent.title}</h4>
+          ${currentEvent.location ? `<p class="text-xs text-gray-400"><i class="fa-solid fa-location-dot mr-1 text-purple-400"></i>${currentEvent.location}</p>` : ''}
+        </div>
+        
+        <!-- Botones de Paso Rápido Anterior / Siguiente -->
+        <div class="flex items-center gap-2">
+          <button onclick="stepEventSong(-1)" class="bg-gray-950 hover:bg-gray-800 text-purple-300 border border-gray-700 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${currentActiveIndex <= 0 ? 'opacity-40 pointer-events-none' : ''}">
+            <i class="fa-solid fa-backward-step"></i> Anterior
+          </button>
+          <button onclick="stepEventSong(1)" class="bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${currentActiveIndex >= songsList.length - 1 ? 'opacity-40 pointer-events-none' : ''}">
+            Siguiente <i class="fa-solid fa-forward-step"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Lista ordenada secuencial del evento -->
+      <div class="bg-gray-900/80 rounded-2xl border border-gray-800 overflow-hidden divide-y divide-gray-800/80">
+        ${songsList.length === 0 ? `
+          <div class="p-8 text-center text-gray-500">
+            <p>No hay canciones asignadas a este evento.</p>
+            <button onclick="openAddEventSongModal()" class="mt-2 bg-purple-600 text-white text-xs px-3 py-1.5 rounded-lg font-bold">
+              Agregar alabanzas
+            </button>
+          </div>
+        ` : songsList.map((item, index) => {
+          const song = AppState.songs.find(s => s.id === item.songId);
+          if (!song) return '';
+          const isCurrentlyLive = AppState.liveCurrentSongId === song.id;
+
+          return `
+            <div class="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${isCurrentlyLive ? 'bg-purple-600/20 border-l-4 border-purple-500' : 'hover:bg-gray-800/40'}">
+              <div class="flex items-center gap-3">
+                <span class="w-8 h-8 rounded-lg ${isCurrentlyLive ? 'bg-purple-600 text-white font-black' : 'bg-gray-950 text-purple-400 border border-gray-800'} flex items-center justify-center text-xs font-mono font-bold shrink-0">
+                  ${index + 1}
+                </span>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-sm font-bold text-white">${song.title}</span>
+                    <span class="bg-purple-500/10 text-purple-300 text-[10px] font-mono px-1.5 py-0.2 rounded border border-purple-500/30">
+                      ${item.key || song.originalKey}
+                    </span>
+                  </div>
+                  ${item.note ? `<p class="text-xs text-amber-300/90 mt-0.5"><i class="fa-solid fa-note-sticky mr-1"></i>${item.note}</p>` : ''}
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2 self-end sm:self-center">
+                <button onclick="broadcastLiveSong('${song.id}', 'Pista #${index + 1}', 'evento')" class="px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${isCurrentlyLive ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30' : 'bg-gray-800 hover:bg-purple-600 text-gray-200 hover:text-white border border-gray-700'}">
+                  <i class="fa-solid fa-tower-broadcast"></i> ${isCurrentlyLive ? 'Transmitiendo Ahora' : 'Transmitir Este Canto'}
+                </button>
+                <button onclick="openSongViewer('${song.id}', 0, 'Canción #${index + 1}')" class="p-2 rounded-xl text-gray-400 hover:text-white bg-gray-950 border border-gray-800 text-xs" title="Ver Acordes">
+                  <i class="fa-solid fa-eye"></i>
+                </button>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function stepEventSong(delta) {
+  const currentEvent = AppState.activeEventSetlist;
+  if (!currentEvent || !currentEvent.songs || currentEvent.songs.length === 0) return;
+  
+  const currentIndex = currentEvent.songs.findIndex(item => item.songId === AppState.liveCurrentSongId);
+  let nextIndex = currentIndex + delta;
+  
+  if (currentIndex === -1) {
+    nextIndex = 0;
+  }
+  
+  if (nextIndex >= 0 && nextIndex < currentEvent.songs.length) {
+    const nextItem = currentEvent.songs[nextIndex];
+    broadcastLiveSong(nextItem.songId, `Pista #${nextIndex + 1}`, 'evento');
+    renderModoDirector(document.getElementById('main-content'));
+  }
 }
 
 function launchMassLive() {
   const currentMass = AppState.activeMassSetlist;
   if (!currentMass) return;
   
-  // Buscar primera ranura asignada
+  AppState.directorType = 'misa';
+  switchTab('director');
+  
+  // Transmitir la primera ranura asignada si existe
   for (const part of LITURGICAL_PARTS) {
-    const songId = currentMass.slots[part.key];
+    const songId = currentMass.slots ? currentMass.slots[part.key] : null;
     if (songId) {
-      broadcastLiveSong(songId, part.label);
-      openSongViewer(songId, 0, part.label);
-      return;
+      broadcastLiveSong(songId, part.label, 'misa');
+      break;
     }
   }
-  showToast('Asigna al menos una alabanza a la misa para iniciar en vivo', 'info');
+  showToast('Iniciado Modo Director para Misa', 'success');
 }
 
 function launchEventLive() {
   const ev = AppState.activeEventSetlist;
   if (!ev || !ev.songs || ev.songs.length === 0) {
-    showToast('Añade al menos una alabanza al evento', 'info');
+    showToast('Añade al menos una alabanza al evento antes de iniciar', 'info');
     return;
   }
+  
+  AppState.directorType = 'evento';
+  switchTab('director');
+  
   const first = ev.songs[0];
-  broadcastLiveSong(first.songId, '1er Canto del Evento');
-  openSongViewer(first.songId, 0, '1er Canto');
+  broadcastLiveSong(first.songId, 'Pista #1', 'evento');
+  showToast('Iniciado Modo Director para Evento', 'success');
 }
 
 // ==========================================

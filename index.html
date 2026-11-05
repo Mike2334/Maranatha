@@ -86,11 +86,11 @@
   </header>
 
   <!-- BANNER FLOTANTE: CANCIÓN ENTRANTE EN VIVO (CUANDO EL DIRECTOR CAMBIA DE TEMA) -->
-  <div id="live-incoming-banner" class="hidden bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 text-black px-4 py-2.5 shadow-2xl z-50 cursor-pointer" onclick="AppState.followDirector = true; onLiveSongReceived({ songId: AppState.liveCurrentSongId, slotLabel: AppState.liveCurrentSlotLabel }); this.classList.add('hidden');">
+  <div id="live-incoming-banner" class="hidden bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 text-black px-4 py-2.5 shadow-2xl z-50 cursor-pointer" onclick="AppState.followDirector = true; onLiveSongReceived({ songId: AppState.liveCurrentSongId, slotLabel: AppState.liveCurrentSlotLabel, contextType: AppState.liveContextType }); this.classList.add('hidden');">
     <div class="max-w-6xl mx-auto flex items-center justify-between text-xs sm:text-sm font-bold">
       <div class="flex items-center gap-2">
         <span class="w-2.5 h-2.5 rounded-full bg-red-600 live-indicator"></span>
-        <span>🔴 EL DIRECTOR INDICÓ:</span>
+        <span id="live-banner-type" class="uppercase">🔴 EN VIVO:</span>
         <span id="live-banner-song-title" class="underline decoration-black underline-offset-2">Título de la alabanza</span>
         <span id="live-banner-slot" class="text-black/80 font-normal"></span>
       </div>
